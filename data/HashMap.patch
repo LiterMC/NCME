@@ -1,5 +1,5 @@
 diff --git a/src/java.base/share/classes/java/util/HashMap.java b/src/java.base/share/classes/java/util/HashMap.java
-index 3ec69cfe9d8..09174f506eb 100644
+index 3ec69cfe9d8..4e90210366a 100644
 --- a/src/java.base/share/classes/java/util/HashMap.java
 +++ b/src/java.base/share/classes/java/util/HashMap.java
 @@ -37,6 +37,9 @@ import java.util.function.Consumer;
@@ -16,8 +16,8 @@ index 3ec69cfe9d8..09174f506eb 100644
       */
      final float loadFactor;
  
-+    transient final ReadWriteLock lock;
-+    transient final List<ConcurrentModificationException> accessing = new ArrayList<>();
++    transient ReadWriteLock lock;
++    transient List<ConcurrentModificationException> accessing = new ArrayList<>();
 +
 +    private ConcurrentModificationException concurrentModificationExceptionWithAccessing(ConcurrentModificationException e) {
 +        synchronized (this.accessing) {
@@ -79,49 +79,43 @@ index 3ec69cfe9d8..09174f506eb 100644
      /* ---------------- Public operations -------------- */
  
      /**
-@@ -453,6 +516,13 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -453,6 +516,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                                                 loadFactor);
          this.loadFactor = loadFactor;
          this.threshold = tableSizeFor(initialCapacity);
-+        ReentrantReadWriteLock lock = null;
 +        try {
 +            if (Thread.currentThread().getContextClassLoader() != null)
-+                lock = new ReentrantReadWriteLock();
++                this.lock = new ReentrantReadWriteLock();
 +        } catch (Throwable e) {
 +        }
-+        this.lock = lock;
      }
  
      /**
-@@ -476,6 +546,13 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -476,6 +544,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
       */
      public HashMap() {
          this.loadFactor = DEFAULT_LOAD_FACTOR; // all other fields defaulted
-+        ReentrantReadWriteLock lock = null;
 +        try {
 +            if (Thread.currentThread().getContextClassLoader() != null)
-+                lock = new ReentrantReadWriteLock();
++                this.lock = new ReentrantReadWriteLock();
 +        } catch (Throwable e) {
 +        }
-+        this.lock = lock;
      }
  
      /**
-@@ -490,6 +567,13 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -490,6 +563,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      public HashMap(Map<? extends K, ? extends V> m) {
          this.loadFactor = DEFAULT_LOAD_FACTOR;
          putMapEntries(m, false);
-+        ReentrantReadWriteLock lock = null;
 +        try {
 +            if (Thread.currentThread().getContextClassLoader() != null)
-+                lock = new ReentrantReadWriteLock();
++                this.lock = new ReentrantReadWriteLock();
 +        } catch (Throwable e) {
 +        }
-+        this.lock = lock;
      }
  
      /**
-@@ -571,6 +655,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -571,6 +649,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
       * @return the node, or null if none
       */
      final Node<K,V> getNode(Object key) {
@@ -131,7 +125,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          Node<K,V>[] tab; Node<K,V> first, e; int n, hash; K k;
          if ((tab = table) != null && (n = tab.length) > 0 &&
              (first = tab[(n - 1) & (hash = hash(key))]) != null) {
-@@ -588,6 +675,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -588,6 +669,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              }
          }
          return null;
@@ -142,7 +136,7 @@ index 3ec69cfe9d8..09174f506eb 100644
      }
  
      /**
-@@ -630,6 +721,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -630,6 +715,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
       */
      final V putVal(int hash, K key, V value, boolean onlyIfAbsent,
                     boolean evict) {
@@ -152,7 +146,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          Node<K,V>[] tab; Node<K,V> p; int n, i;
          if ((tab = table) == null || (n = tab.length) == 0)
              n = (tab = resize()).length;
-@@ -669,6 +763,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -669,6 +757,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              resize();
          afterNodeInsertion(evict);
          return null;
@@ -163,7 +157,7 @@ index 3ec69cfe9d8..09174f506eb 100644
      }
  
      /**
-@@ -818,6 +916,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -818,6 +910,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
       */
      final Node<K,V> removeNode(int hash, Object key, Object value,
                                 boolean matchValue, boolean movable) {
@@ -173,7 +167,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          Node<K,V>[] tab; Node<K,V> p; int n, index;
          if ((tab = table) != null && (n = tab.length) > 0 &&
              (p = tab[index = (n - 1) & hash]) != null) {
-@@ -855,6 +956,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -855,6 +950,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              }
          }
          return null;
@@ -184,7 +178,7 @@ index 3ec69cfe9d8..09174f506eb 100644
      }
  
      /**
-@@ -862,6 +967,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -862,6 +961,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
       * The map will be empty after this call returns.
       */
      public void clear() {
@@ -194,7 +188,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          Node<K,V>[] tab;
          modCount++;
          if ((tab = table) != null && size > 0) {
-@@ -869,6 +977,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -869,6 +971,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              for (int i = 0; i < tab.length; ++i)
                  tab[i] = null;
          }
@@ -205,7 +199,7 @@ index 3ec69cfe9d8..09174f506eb 100644
      }
  
      /**
-@@ -880,6 +992,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -880,6 +986,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
       *         specified value
       */
      public boolean containsValue(Object value) {
@@ -215,7 +209,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          Node<K,V>[] tab; V v;
          if ((tab = table) != null && size > 0) {
              for (Node<K,V> e : tab) {
-@@ -891,6 +1006,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -891,6 +1000,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              }
          }
          return false;
@@ -226,7 +220,7 @@ index 3ec69cfe9d8..09174f506eb 100644
      }
  
      /**
-@@ -1006,6 +1125,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1006,6 +1119,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
          }
  
          public final void forEach(Consumer<? super K> action) {
@@ -236,7 +230,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              Node<K,V>[] tab;
              if (action == null)
                  throw new NullPointerException();
-@@ -1016,7 +1138,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1016,7 +1132,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                          action.accept(e.key);
                  }
                  if (modCount != mc)
@@ -249,7 +243,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              }
          }
      }
-@@ -1063,6 +1189,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1063,6 +1183,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
          }
  
          public final void forEach(Consumer<? super V> action) {
@@ -259,7 +253,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              Node<K,V>[] tab;
              if (action == null)
                  throw new NullPointerException();
-@@ -1073,7 +1202,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1073,7 +1196,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                          action.accept(e.value);
                  }
                  if (modCount != mc)
@@ -272,7 +266,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              }
          }
      }
-@@ -1124,6 +1257,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1124,6 +1251,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              return new EntrySpliterator<>(HashMap.this, 0, -1, 0, 0);
          }
          public final void forEach(Consumer<? super Map.Entry<K,V>> action) {
@@ -282,7 +276,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              Node<K,V>[] tab;
              if (action == null)
                  throw new NullPointerException();
-@@ -1134,7 +1270,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1134,7 +1264,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                          action.accept(e);
                  }
                  if (modCount != mc)
@@ -295,7 +289,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              }
          }
      }
-@@ -1159,6 +1299,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1159,6 +1293,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
  
      @Override
      public boolean replace(K key, V oldValue, V newValue) {
@@ -305,7 +299,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          Node<K,V> e; V v;
          if ((e = getNode(key)) != null &&
              ((v = e.value) == oldValue || (v != null && v.equals(oldValue)))) {
-@@ -1167,10 +1310,17 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1167,10 +1304,17 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              return true;
          }
          return false;
@@ -323,7 +317,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          Node<K,V> e;
          if ((e = getNode(key)) != null) {
              V oldValue = e.value;
-@@ -1179,6 +1329,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1179,6 +1323,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              return oldValue;
          }
          return null;
@@ -334,7 +328,7 @@ index 3ec69cfe9d8..09174f506eb 100644
      }
  
      /**
-@@ -1194,6 +1348,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1194,6 +1342,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      @Override
      public V computeIfAbsent(K key,
                               Function<? super K, ? extends V> mappingFunction) {
@@ -344,7 +338,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          if (mappingFunction == null)
              throw new NullPointerException();
          int hash = hash(key);
-@@ -1226,7 +1383,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1226,7 +1377,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
          }
          int mc = modCount;
          V v = mappingFunction.apply(key);
@@ -353,7 +347,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          if (v == null) {
              return null;
          } else if (old != null) {
-@@ -1245,6 +1402,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1245,6 +1396,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
          ++size;
          afterNodeInsertion(true);
          return v;
@@ -364,7 +358,7 @@ index 3ec69cfe9d8..09174f506eb 100644
      }
  
      /**
-@@ -1260,6 +1421,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1260,6 +1415,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      @Override
      public V computeIfPresent(K key,
                                BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
@@ -374,7 +368,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          if (remappingFunction == null)
              throw new NullPointerException();
          Node<K,V> e; V oldValue;
-@@ -1267,7 +1431,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1267,7 +1425,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              (oldValue = e.value) != null) {
              int mc = modCount;
              V v = remappingFunction.apply(key, oldValue);
@@ -383,7 +377,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              if (v != null) {
                  e.value = v;
                  afterNodeAccess(e);
-@@ -1279,6 +1443,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1279,6 +1437,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              }
          }
          return null;
@@ -394,7 +388,7 @@ index 3ec69cfe9d8..09174f506eb 100644
      }
  
      /**
-@@ -1294,6 +1462,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1294,6 +1456,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      @Override
      public V compute(K key,
                       BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
@@ -404,7 +398,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          if (remappingFunction == null)
              throw new NullPointerException();
          int hash = hash(key);
-@@ -1322,7 +1493,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1322,7 +1487,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
          V oldValue = (old == null) ? null : old.value;
          int mc = modCount;
          V v = remappingFunction.apply(key, oldValue);
@@ -413,7 +407,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          if (old != null) {
              if (v != null) {
                  old.value = v;
-@@ -1344,6 +1515,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1344,6 +1509,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              afterNodeInsertion(true);
          }
          return v;
@@ -424,7 +418,7 @@ index 3ec69cfe9d8..09174f506eb 100644
      }
  
      /**
-@@ -1359,6 +1534,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1359,6 +1528,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      @Override
      public V merge(K key, V value,
                     BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
@@ -434,7 +428,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          if (value == null || remappingFunction == null)
              throw new NullPointerException();
          int hash = hash(key);
-@@ -1390,7 +1568,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1390,7 +1562,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                  int mc = modCount;
                  v = remappingFunction.apply(old.value, value);
                  if (mc != modCount) {
@@ -443,7 +437,7 @@ index 3ec69cfe9d8..09174f506eb 100644
                  }
              } else {
                  v = value;
-@@ -1415,10 +1593,17 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1415,10 +1587,17 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              afterNodeInsertion(true);
              return value;
          }
@@ -461,7 +455,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          Node<K,V>[] tab;
          if (action == null)
              throw new NullPointerException();
-@@ -1429,12 +1614,19 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1429,12 +1608,19 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                      action.accept(e.key, e.value);
              }
              if (modCount != mc)
@@ -482,7 +476,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          Node<K,V>[] tab;
          if (function == null)
              throw new NullPointerException();
-@@ -1446,7 +1638,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1446,7 +1632,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                  }
              }
              if (modCount != mc)
@@ -495,7 +489,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          }
      }
  
-@@ -1462,6 +1658,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1462,6 +1652,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      @SuppressWarnings("unchecked")
      @Override
      public Object clone() {
@@ -505,7 +499,12 @@ index 3ec69cfe9d8..09174f506eb 100644
          HashMap<K,V> result;
          try {
              result = (HashMap<K,V>)super.clone();
-@@ -1472,6 +1671,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1469,9 +1662,15 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             // this shouldn't happen, since we are Cloneable
+             throw new InternalError(e);
+         }
++        result.lock = new ReentrantReadWriteLock();
++        result.accessing = new ArrayList<>();
          result.reinitialize();
          result.putMapEntries(this, false);
          return result;
@@ -516,7 +515,7 @@ index 3ec69cfe9d8..09174f506eb 100644
      }
  
      // These methods are also used when serializing HashSets
-@@ -1497,12 +1700,19 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1497,12 +1696,19 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      @java.io.Serial
      private void writeObject(java.io.ObjectOutputStream s)
          throws IOException {
@@ -536,7 +535,7 @@ index 3ec69cfe9d8..09174f506eb 100644
      }
  
      /**
-@@ -1516,6 +1726,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1516,6 +1722,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      private void readObject(ObjectInputStream s)
          throws IOException, ClassNotFoundException {
  
@@ -546,7 +545,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          ObjectInputStream.GetField fields = s.readFields();
  
          // Read loadFactor (ignore threshold)
-@@ -1561,6 +1774,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1561,6 +1770,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                  putVal(hash(key), key, value, false, false);
              }
          }
@@ -557,7 +556,7 @@ index 3ec69cfe9d8..09174f506eb 100644
      }
  
      // Support for resetting final field during deserializing
-@@ -1602,7 +1819,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1602,7 +1815,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              Node<K,V>[] t;
              Node<K,V> e = next;
              if (modCount != expectedModCount)
@@ -566,7 +565,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              if (e == null)
                  throw new NoSuchElementException();
              if ((next = (current = e).next) == null && (t = table) != null) {
-@@ -1616,7 +1833,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1616,7 +1829,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
              if (p == null)
                  throw new IllegalStateException();
              if (modCount != expectedModCount)
@@ -575,7 +574,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              current = null;
              removeNode(p.hash, p.key, null, false, false);
              expectedModCount = modCount;
-@@ -1693,6 +1910,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1693,6 +1906,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
          }
  
          public void forEachRemaining(Consumer<? super K> action) {
@@ -585,7 +584,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              int i, hi, mc;
              if (action == null)
                  throw new NullPointerException();
-@@ -1717,11 +1937,18 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1717,11 +1933,18 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                      }
                  } while (p != null || i < hi);
                  if (m.modCount != mc)
@@ -605,7 +604,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              int hi;
              if (action == null)
                  throw new NullPointerException();
-@@ -1735,12 +1962,16 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1735,12 +1958,16 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                          current = current.next;
                          action.accept(k);
                          if (map.modCount != expectedModCount)
@@ -623,7 +622,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          }
  
          public int characteristics() {
-@@ -1765,6 +1996,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1765,6 +1992,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
          }
  
          public void forEachRemaining(Consumer<? super V> action) {
@@ -633,7 +632,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              int i, hi, mc;
              if (action == null)
                  throw new NullPointerException();
-@@ -1789,11 +2023,18 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1789,11 +2019,18 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                      }
                  } while (p != null || i < hi);
                  if (m.modCount != mc)
@@ -653,7 +652,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              int hi;
              if (action == null)
                  throw new NullPointerException();
-@@ -1807,12 +2048,16 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1807,12 +2044,16 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                          current = current.next;
                          action.accept(v);
                          if (map.modCount != expectedModCount)
@@ -671,7 +670,7 @@ index 3ec69cfe9d8..09174f506eb 100644
          }
  
          public int characteristics() {
-@@ -1836,6 +2081,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1836,6 +2077,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
          }
  
          public void forEachRemaining(Consumer<? super Map.Entry<K,V>> action) {
@@ -681,7 +680,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              int i, hi, mc;
              if (action == null)
                  throw new NullPointerException();
-@@ -1860,11 +2108,18 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1860,11 +2104,18 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                      }
                  } while (p != null || i < hi);
                  if (m.modCount != mc)
@@ -701,7 +700,7 @@ index 3ec69cfe9d8..09174f506eb 100644
              int hi;
              if (action == null)
                  throw new NullPointerException();
-@@ -1878,12 +2133,16 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+@@ -1878,12 +2129,16 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                          current = current.next;
                          action.accept(e);
                          if (map.modCount != expectedModCount)
