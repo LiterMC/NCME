@@ -7,6 +7,8 @@ Only support Java 17.
 
 Only support `java.util.HashMap` operations.
 
+Class files compiled from [OpenJDK](https://github.com/openjdk)
+
 ## Usage
 
 Add the following JVM argument:
