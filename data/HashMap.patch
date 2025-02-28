@@ -1,0 +1,721 @@
+diff --git a/src/java.base/share/classes/java/util/HashMap.java b/src/java.base/share/classes/java/util/HashMap.java
+index 3ec69cfe9d8..09174f506eb 100644
+--- a/src/java.base/share/classes/java/util/HashMap.java
++++ b/src/java.base/share/classes/java/util/HashMap.java
+@@ -37,6 +37,9 @@ import java.util.function.Consumer;
+ import java.util.function.Function;
+ import jdk.internal.access.SharedSecrets;
+ 
++import java.util.concurrent.locks.ReadWriteLock;
++import java.util.concurrent.locks.ReentrantReadWriteLock;
++
+ /**
+  * Hash table based implementation of the {@code Map} interface.  This
+  * implementation provides all of the optional map operations, and permits
+@@ -427,6 +430,66 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+      */
+     final float loadFactor;
+ 
++    transient final ReadWriteLock lock;
++    transient final List<ConcurrentModificationException> accessing = new ArrayList<>();
++
++    private ConcurrentModificationException concurrentModificationExceptionWithAccessing(ConcurrentModificationException e) {
++        synchronized (this.accessing) {
++            this.accessing.forEach(e::addSuppressed);
++        }
++        return e;
++    }
++
++    private Object beforeRead() {
++        if (this.lock == null) {
++            return null;
++        }
++        ConcurrentModificationException e = new ConcurrentModificationException();
++        synchronized (this.accessing) {
++            if (!this.lock.readLock().tryLock()) {
++                this.accessing.forEach(e::addSuppressed);
++                throw e;
++            }
++            this.accessing.add(e);
++        }
++        return e;
++    }
++
++    private void afterRead(Object e) {
++        if (this.lock == null) {
++            return;
++        }
++        this.lock.readLock().unlock();
++        synchronized (this.accessing) {
++            this.accessing.remove(this.accessing.lastIndexOf(e));
++        }
++    }
++
++    private Object beforeWrite() {
++        if (this.lock == null) {
++            return null;
++        }
++        ConcurrentModificationException e = new ConcurrentModificationException();
++        synchronized (this.accessing) {
++            if (!this.lock.writeLock().tryLock()) {
++                this.accessing.forEach(e::addSuppressed);
++                throw e;
++            }
++            this.accessing.add(e);
++        }
++        return e;
++    }
++
++    private void afterWrite(Object e) {
++        if (this.lock == null) {
++            return;
++        }
++        this.lock.writeLock().unlock();
++        synchronized (this.accessing) {
++            this.accessing.remove(this.accessing.lastIndexOf(e));
++        }
++    }
++
+     /* ---------------- Public operations -------------- */
+ 
+     /**
+@@ -453,6 +516,13 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                                                loadFactor);
+         this.loadFactor = loadFactor;
+         this.threshold = tableSizeFor(initialCapacity);
++        ReentrantReadWriteLock lock = null;
++        try {
++            if (Thread.currentThread().getContextClassLoader() != null)
++                lock = new ReentrantReadWriteLock();
++        } catch (Throwable e) {
++        }
++        this.lock = lock;
+     }
+ 
+     /**
+@@ -476,6 +546,13 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+      */
+     public HashMap() {
+         this.loadFactor = DEFAULT_LOAD_FACTOR; // all other fields defaulted
++        ReentrantReadWriteLock lock = null;
++        try {
++            if (Thread.currentThread().getContextClassLoader() != null)
++                lock = new ReentrantReadWriteLock();
++        } catch (Throwable e) {
++        }
++        this.lock = lock;
+     }
+ 
+     /**
+@@ -490,6 +567,13 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+     public HashMap(Map<? extends K, ? extends V> m) {
+         this.loadFactor = DEFAULT_LOAD_FACTOR;
+         putMapEntries(m, false);
++        ReentrantReadWriteLock lock = null;
++        try {
++            if (Thread.currentThread().getContextClassLoader() != null)
++                lock = new ReentrantReadWriteLock();
++        } catch (Throwable e) {
++        }
++        this.lock = lock;
+     }
+ 
+     /**
+@@ -571,6 +655,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+      * @return the node, or null if none
+      */
+     final Node<K,V> getNode(Object key) {
++        Object locked = this.beforeRead();
++        try {
++
+         Node<K,V>[] tab; Node<K,V> first, e; int n, hash; K k;
+         if ((tab = table) != null && (n = tab.length) > 0 &&
+             (first = tab[(n - 1) & (hash = hash(key))]) != null) {
+@@ -588,6 +675,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             }
+         }
+         return null;
++
++        } finally {
++            this.afterRead(locked);
++        }
+     }
+ 
+     /**
+@@ -630,6 +721,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+      */
+     final V putVal(int hash, K key, V value, boolean onlyIfAbsent,
+                    boolean evict) {
++        Object locked = this.beforeWrite();
++        try {
++
+         Node<K,V>[] tab; Node<K,V> p; int n, i;
+         if ((tab = table) == null || (n = tab.length) == 0)
+             n = (tab = resize()).length;
+@@ -669,6 +763,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             resize();
+         afterNodeInsertion(evict);
+         return null;
++
++        } finally {
++            this.afterWrite(locked);
++        }
+     }
+ 
+     /**
+@@ -818,6 +916,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+      */
+     final Node<K,V> removeNode(int hash, Object key, Object value,
+                                boolean matchValue, boolean movable) {
++        Object locked = this.beforeWrite();
++        try {
++
+         Node<K,V>[] tab; Node<K,V> p; int n, index;
+         if ((tab = table) != null && (n = tab.length) > 0 &&
+             (p = tab[index = (n - 1) & hash]) != null) {
+@@ -855,6 +956,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             }
+         }
+         return null;
++
++        } finally {
++            this.afterWrite(locked);
++        }
+     }
+ 
+     /**
+@@ -862,6 +967,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+      * The map will be empty after this call returns.
+      */
+     public void clear() {
++        Object locked = this.beforeWrite();
++        try {
++
+         Node<K,V>[] tab;
+         modCount++;
+         if ((tab = table) != null && size > 0) {
+@@ -869,6 +977,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             for (int i = 0; i < tab.length; ++i)
+                 tab[i] = null;
+         }
++
++        } finally {
++            this.afterWrite(locked);
++        }
+     }
+ 
+     /**
+@@ -880,6 +992,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+      *         specified value
+      */
+     public boolean containsValue(Object value) {
++        Object locked = this.beforeRead();
++        try {
++
+         Node<K,V>[] tab; V v;
+         if ((tab = table) != null && size > 0) {
+             for (Node<K,V> e : tab) {
+@@ -891,6 +1006,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             }
+         }
+         return false;
++
++        } finally {
++            this.afterRead(locked);
++        }
+     }
+ 
+     /**
+@@ -1006,6 +1125,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+         }
+ 
+         public final void forEach(Consumer<? super K> action) {
++            Object locked = HashMap.this.beforeRead();
++            try {
++
+             Node<K,V>[] tab;
+             if (action == null)
+                 throw new NullPointerException();
+@@ -1016,7 +1138,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                         action.accept(e.key);
+                 }
+                 if (modCount != mc)
+-                    throw new ConcurrentModificationException();
++                    throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
++            }
++
++            } finally {
++                HashMap.this.afterRead(locked);
+             }
+         }
+     }
+@@ -1063,6 +1189,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+         }
+ 
+         public final void forEach(Consumer<? super V> action) {
++            Object locked = HashMap.this.beforeRead();
++            try {
++
+             Node<K,V>[] tab;
+             if (action == null)
+                 throw new NullPointerException();
+@@ -1073,7 +1202,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                         action.accept(e.value);
+                 }
+                 if (modCount != mc)
+-                    throw new ConcurrentModificationException();
++                    throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
++            }
++
++            } finally {
++                HashMap.this.afterRead(locked);
+             }
+         }
+     }
+@@ -1124,6 +1257,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             return new EntrySpliterator<>(HashMap.this, 0, -1, 0, 0);
+         }
+         public final void forEach(Consumer<? super Map.Entry<K,V>> action) {
++            Object locked = HashMap.this.beforeRead();
++            try {
++
+             Node<K,V>[] tab;
+             if (action == null)
+                 throw new NullPointerException();
+@@ -1134,7 +1270,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                         action.accept(e);
+                 }
+                 if (modCount != mc)
+-                    throw new ConcurrentModificationException();
++                    throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
++            }
++
++            } finally {
++                HashMap.this.afterRead(locked);
+             }
+         }
+     }
+@@ -1159,6 +1299,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+ 
+     @Override
+     public boolean replace(K key, V oldValue, V newValue) {
++        Object locked = this.beforeWrite();
++        try {
++
+         Node<K,V> e; V v;
+         if ((e = getNode(key)) != null &&
+             ((v = e.value) == oldValue || (v != null && v.equals(oldValue)))) {
+@@ -1167,10 +1310,17 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             return true;
+         }
+         return false;
++
++        } finally {
++            this.afterWrite(locked);
++        }
+     }
+ 
+     @Override
+     public V replace(K key, V value) {
++        Object locked = this.beforeWrite();
++        try {
++
+         Node<K,V> e;
+         if ((e = getNode(key)) != null) {
+             V oldValue = e.value;
+@@ -1179,6 +1329,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             return oldValue;
+         }
+         return null;
++
++        } finally {
++            this.afterWrite(locked);
++        }
+     }
+ 
+     /**
+@@ -1194,6 +1348,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+     @Override
+     public V computeIfAbsent(K key,
+                              Function<? super K, ? extends V> mappingFunction) {
++        Object locked = this.beforeWrite();
++        try {
++
+         if (mappingFunction == null)
+             throw new NullPointerException();
+         int hash = hash(key);
+@@ -1226,7 +1383,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+         }
+         int mc = modCount;
+         V v = mappingFunction.apply(key);
+-        if (mc != modCount) { throw new ConcurrentModificationException(); }
++        if (mc != modCount) { throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException()); }
+         if (v == null) {
+             return null;
+         } else if (old != null) {
+@@ -1245,6 +1402,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+         ++size;
+         afterNodeInsertion(true);
+         return v;
++
++        } finally {
++            this.afterWrite(locked);
++        }
+     }
+ 
+     /**
+@@ -1260,6 +1421,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+     @Override
+     public V computeIfPresent(K key,
+                               BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
++        Object locked = this.beforeWrite();
++        try {
++
+         if (remappingFunction == null)
+             throw new NullPointerException();
+         Node<K,V> e; V oldValue;
+@@ -1267,7 +1431,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             (oldValue = e.value) != null) {
+             int mc = modCount;
+             V v = remappingFunction.apply(key, oldValue);
+-            if (mc != modCount) { throw new ConcurrentModificationException(); }
++            if (mc != modCount) { throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException()); }
+             if (v != null) {
+                 e.value = v;
+                 afterNodeAccess(e);
+@@ -1279,6 +1443,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             }
+         }
+         return null;
++
++        } finally {
++            this.afterWrite(locked);
++        }
+     }
+ 
+     /**
+@@ -1294,6 +1462,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+     @Override
+     public V compute(K key,
+                      BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
++        Object locked = this.beforeWrite();
++        try {
++
+         if (remappingFunction == null)
+             throw new NullPointerException();
+         int hash = hash(key);
+@@ -1322,7 +1493,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+         V oldValue = (old == null) ? null : old.value;
+         int mc = modCount;
+         V v = remappingFunction.apply(key, oldValue);
+-        if (mc != modCount) { throw new ConcurrentModificationException(); }
++        if (mc != modCount) { throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException()); }
+         if (old != null) {
+             if (v != null) {
+                 old.value = v;
+@@ -1344,6 +1515,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             afterNodeInsertion(true);
+         }
+         return v;
++
++        } finally {
++            this.afterWrite(locked);
++        }
+     }
+ 
+     /**
+@@ -1359,6 +1534,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+     @Override
+     public V merge(K key, V value,
+                    BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
++        Object locked = this.beforeWrite();
++        try {
++
+         if (value == null || remappingFunction == null)
+             throw new NullPointerException();
+         int hash = hash(key);
+@@ -1390,7 +1568,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                 int mc = modCount;
+                 v = remappingFunction.apply(old.value, value);
+                 if (mc != modCount) {
+-                    throw new ConcurrentModificationException();
++                    throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                 }
+             } else {
+                 v = value;
+@@ -1415,10 +1593,17 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             afterNodeInsertion(true);
+             return value;
+         }
++
++        } finally {
++            this.afterWrite(locked);
++        }
+     }
+ 
+     @Override
+     public void forEach(BiConsumer<? super K, ? super V> action) {
++        Object locked = this.beforeRead();
++        try {
++
+         Node<K,V>[] tab;
+         if (action == null)
+             throw new NullPointerException();
+@@ -1429,12 +1614,19 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                     action.accept(e.key, e.value);
+             }
+             if (modCount != mc)
+-                throw new ConcurrentModificationException();
++                throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
++        }
++
++        } finally {
++            this.afterRead(locked);
+         }
+     }
+ 
+     @Override
+     public void replaceAll(BiFunction<? super K, ? super V, ? extends V> function) {
++        Object locked = this.beforeWrite();
++        try {
++
+         Node<K,V>[] tab;
+         if (function == null)
+             throw new NullPointerException();
+@@ -1446,7 +1638,11 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                 }
+             }
+             if (modCount != mc)
+-                throw new ConcurrentModificationException();
++                throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
++        }
++
++        } finally {
++            this.afterWrite(locked);
+         }
+     }
+ 
+@@ -1462,6 +1658,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+     @SuppressWarnings("unchecked")
+     @Override
+     public Object clone() {
++        Object locked = this.beforeRead();
++        try {
++
+         HashMap<K,V> result;
+         try {
+             result = (HashMap<K,V>)super.clone();
+@@ -1472,6 +1671,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+         result.reinitialize();
+         result.putMapEntries(this, false);
+         return result;
++
++        } finally {
++            this.afterRead(locked);
++        }
+     }
+ 
+     // These methods are also used when serializing HashSets
+@@ -1497,12 +1700,19 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+     @java.io.Serial
+     private void writeObject(java.io.ObjectOutputStream s)
+         throws IOException {
++        Object locked = this.beforeRead();
++        try {
++
+         int buckets = capacity();
+         // Write out the threshold, loadfactor, and any hidden stuff
+         s.defaultWriteObject();
+         s.writeInt(buckets);
+         s.writeInt(size);
+         internalWriteEntries(s);
++
++        } finally {
++            this.afterRead(locked);
++        }
+     }
+ 
+     /**
+@@ -1516,6 +1726,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+     private void readObject(ObjectInputStream s)
+         throws IOException, ClassNotFoundException {
+ 
++        Object locked = this.beforeWrite();
++        try {
++
+         ObjectInputStream.GetField fields = s.readFields();
+ 
+         // Read loadFactor (ignore threshold)
+@@ -1561,6 +1774,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                 putVal(hash(key), key, value, false, false);
+             }
+         }
++
++        } finally {
++            this.afterWrite(locked);
++        }
+     }
+ 
+     // Support for resetting final field during deserializing
+@@ -1602,7 +1819,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             Node<K,V>[] t;
+             Node<K,V> e = next;
+             if (modCount != expectedModCount)
+-                throw new ConcurrentModificationException();
++                throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+             if (e == null)
+                 throw new NoSuchElementException();
+             if ((next = (current = e).next) == null && (t = table) != null) {
+@@ -1616,7 +1833,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+             if (p == null)
+                 throw new IllegalStateException();
+             if (modCount != expectedModCount)
+-                throw new ConcurrentModificationException();
++                throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+             current = null;
+             removeNode(p.hash, p.key, null, false, false);
+             expectedModCount = modCount;
+@@ -1693,6 +1910,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+         }
+ 
+         public void forEachRemaining(Consumer<? super K> action) {
++            Object locked = map.beforeRead();
++            try {
++
+             int i, hi, mc;
+             if (action == null)
+                 throw new NullPointerException();
+@@ -1717,11 +1937,18 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                     }
+                 } while (p != null || i < hi);
+                 if (m.modCount != mc)
+-                    throw new ConcurrentModificationException();
++                    throw map.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
++            }
++
++            } finally {
++                map.afterRead(locked);
+             }
+         }
+ 
+         public boolean tryAdvance(Consumer<? super K> action) {
++            Object locked = map.beforeRead();
++            try {
++
+             int hi;
+             if (action == null)
+                 throw new NullPointerException();
+@@ -1735,12 +1962,16 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                         current = current.next;
+                         action.accept(k);
+                         if (map.modCount != expectedModCount)
+-                            throw new ConcurrentModificationException();
++                            throw map.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                         return true;
+                     }
+                 }
+             }
+             return false;
++
++            } finally {
++                map.afterRead(locked);
++            }
+         }
+ 
+         public int characteristics() {
+@@ -1765,6 +1996,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+         }
+ 
+         public void forEachRemaining(Consumer<? super V> action) {
++            Object locked = map.beforeRead();
++            try {
++
+             int i, hi, mc;
+             if (action == null)
+                 throw new NullPointerException();
+@@ -1789,11 +2023,18 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                     }
+                 } while (p != null || i < hi);
+                 if (m.modCount != mc)
+-                    throw new ConcurrentModificationException();
++                    throw map.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
++            }
++
++            } finally {
++                map.afterRead(locked);
+             }
+         }
+ 
+         public boolean tryAdvance(Consumer<? super V> action) {
++            Object locked = map.beforeRead();
++            try {
++
+             int hi;
+             if (action == null)
+                 throw new NullPointerException();
+@@ -1807,12 +2048,16 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                         current = current.next;
+                         action.accept(v);
+                         if (map.modCount != expectedModCount)
+-                            throw new ConcurrentModificationException();
++                            throw map.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                         return true;
+                     }
+                 }
+             }
+             return false;
++
++            } finally {
++                map.afterRead(locked);
++            }
+         }
+ 
+         public int characteristics() {
+@@ -1836,6 +2081,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+         }
+ 
+         public void forEachRemaining(Consumer<? super Map.Entry<K,V>> action) {
++            Object locked = map.beforeRead();
++            try {
++
+             int i, hi, mc;
+             if (action == null)
+                 throw new NullPointerException();
+@@ -1860,11 +2108,18 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                     }
+                 } while (p != null || i < hi);
+                 if (m.modCount != mc)
+-                    throw new ConcurrentModificationException();
++                    throw map.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
++            }
++
++            } finally {
++                map.afterRead(locked);
+             }
+         }
+ 
+         public boolean tryAdvance(Consumer<? super Map.Entry<K,V>> action) {
++            Object locked = map.beforeRead();
++            try {
++
+             int hi;
+             if (action == null)
+                 throw new NullPointerException();
+@@ -1878,12 +2133,16 @@ public class HashMap<K,V> extends AbstractMap<K,V>
+                         current = current.next;
+                         action.accept(e);
+                         if (map.modCount != expectedModCount)
+-                            throw new ConcurrentModificationException();
++                            throw map.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                         return true;
+                     }
+                 }
+             }
+             return false;
++
++            } finally {
++                map.afterRead(locked);
++            }
+         }
+ 
+         public int characteristics() {
