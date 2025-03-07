@@ -1,0 +1,897 @@
+diff --git a/src/java.base/share/classes/java/util/ArrayList.java b/src/java.base/share/classes/java/util/ArrayList.java
+index a36dcd8a796..12978266c1b 100644
+--- a/src/java.base/share/classes/java/util/ArrayList.java
++++ b/src/java.base/share/classes/java/util/ArrayList.java
+@@ -144,6 +144,94 @@ public class ArrayList<E> extends AbstractList<E>
+      */
+     private int size;
+ 
++    private transient java.util.concurrent.locks.ReentrantReadWriteLock lock;
++    private transient java.util.concurrent.locks.ReentrantReadWriteLock accessingLock;
++    private transient java.util.LinkedList<ConcurrentModificationException> accessing;
++
++    private void initNCME() {
++        try {
++            if (Thread.currentThread().getContextClassLoader() != null) {
++                this.lock = new java.util.concurrent.locks.ReentrantReadWriteLock();
++                this.accessingLock = new java.util.concurrent.locks.ReentrantReadWriteLock();
++                this.accessing = new java.util.LinkedList<>();
++            }
++        } catch (Throwable e) {
++        }
++    }
++
++    private ConcurrentModificationException concurrentModificationExceptionWithAccessing(ConcurrentModificationException e) {
++        if (this.accessingLock != null) {
++            this.accessingLock.readLock().lock();
++            try {
++                this.accessing.forEach(e::addSuppressed);
++            } finally {
++                this.accessingLock.readLock().unlock();
++            }
++        }
++        return e;
++    }
++
++    private Object beforeTryLock(java.util.concurrent.locks.Lock lock, ConcurrentModificationException e) {
++        this.accessingLock.readLock().lock();
++        try {
++            if (!lock.tryLock()) {
++                this.accessing.forEach(e::addSuppressed);
++                throw e;
++            }
++        } finally {
++            this.accessingLock.readLock().unlock();
++        }
++        this.accessingLock.writeLock().lock();
++        try {
++            this.accessing.add(e);
++        } finally {
++            this.accessingLock.writeLock().unlock();
++        }
++        return e;
++    }
++
++    private void afterLock(java.util.concurrent.locks.Lock lock, Object e) {
++        lock.unlock();
++        this.accessingLock.writeLock().lock();
++        try {
++            this.accessing.removeLastOccurrence(e);
++        } finally {
++            this.accessingLock.writeLock().unlock();
++        }
++    }
++
++    private Object beforeRead() {
++        if (this.lock == null) {
++            return null;
++        }
++        ConcurrentModificationException e = new ConcurrentModificationException();
++        this.beforeTryLock(this.lock.readLock(), e);
++        return e;
++    }
++
++    private void afterRead(Object e) {
++        if (this.lock == null) {
++            return;
++        }
++        this.afterLock(this.lock.readLock(), e);
++    }
++
++    private Object beforeWrite() {
++        if (this.lock == null) {
++            return null;
++        }
++        ConcurrentModificationException e = new ConcurrentModificationException();
++        this.beforeTryLock(this.lock.writeLock(), e);
++        return e;
++    }
++
++    private void afterWrite(Object e) {
++        if (this.lock == null) {
++            return;
++        }
++        this.afterLock(this.lock.writeLock(), e);
++    }
++
+     /**
+      * Constructs an empty list with the specified initial capacity.
+      *
+@@ -160,6 +248,7 @@ public class ArrayList<E> extends AbstractList<E>
+             throw new IllegalArgumentException("Illegal Capacity: "+
+                                                initialCapacity);
+         }
++this.initNCME();
+     }
+ 
+     /**
+@@ -167,6 +256,7 @@ public class ArrayList<E> extends AbstractList<E>
+      */
+     public ArrayList() {
+         this.elementData = DEFAULTCAPACITY_EMPTY_ELEMENTDATA;
++this.initNCME();
+     }
+ 
+     /**
+@@ -189,6 +279,7 @@ public class ArrayList<E> extends AbstractList<E>
+             // replace with empty array.
+             elementData = EMPTY_ELEMENTDATA;
+         }
++this.initNCME();
+     }
+ 
+     /**
+@@ -340,8 +431,12 @@ public class ArrayList<E> extends AbstractList<E>
+      * @return a clone of this {@code ArrayList} instance
+      */
+     public Object clone() {
++Object locked = this.beforeRead();
++try {
++
+         try {
+             ArrayList<?> v = (ArrayList<?>) super.clone();
++v.initNCME();
+             v.elementData = Arrays.copyOf(elementData, size);
+             v.modCount = 0;
+             return v;
+@@ -349,6 +444,10 @@ public class ArrayList<E> extends AbstractList<E>
+             // this shouldn't happen, since we are Cloneable
+             throw new InternalError(e);
+         }
++
++} finally {
++    this.afterRead(locked);
++}
+     }
+ 
+     /**
+@@ -366,7 +465,14 @@ public class ArrayList<E> extends AbstractList<E>
+      *         proper sequence
+      */
+     public Object[] toArray() {
++Object locked = this.beforeRead();
++try {
++
+         return Arrays.copyOf(elementData, size);
++
++} finally {
++    this.afterRead(locked);
++}
+     }
+ 
+     /**
+@@ -395,6 +501,9 @@ public class ArrayList<E> extends AbstractList<E>
+      */
+     @SuppressWarnings("unchecked")
+     public <T> T[] toArray(T[] a) {
++Object locked = this.beforeRead();
++try {
++
+         if (a.length < size)
+             // Make a new array of a's runtime type, but my contents:
+             return (T[]) Arrays.copyOf(elementData, size, a.getClass());
+@@ -402,13 +511,24 @@ public class ArrayList<E> extends AbstractList<E>
+         if (a.length > size)
+             a[size] = null;
+         return a;
++
++} finally {
++    this.afterRead(locked);
++}
+     }
+ 
+     // Positional Access Operations
+ 
+     @SuppressWarnings("unchecked")
+     E elementData(int index) {
++Object locked = this.beforeRead();
++try {
++
+         return (E) elementData[index];
++
++} finally {
++    this.afterRead(locked);
++}
+     }
+ 
+     @SuppressWarnings("unchecked")
+@@ -438,10 +558,17 @@ public class ArrayList<E> extends AbstractList<E>
+      * @throws IndexOutOfBoundsException {@inheritDoc}
+      */
+     public E set(int index, E element) {
++Object locked = this.beforeWrite();
++try {
++
+         Objects.checkIndex(index, size);
+         E oldValue = elementData(index);
+         elementData[index] = element;
+         return oldValue;
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     /**
+@@ -450,10 +577,17 @@ public class ArrayList<E> extends AbstractList<E>
+      * which helps when add(E) is called in a C1-compiled loop.
+      */
+     private void add(E e, Object[] elementData, int s) {
++Object locked = this.beforeWrite();
++try {
++
+         if (s == elementData.length)
+             elementData = grow();
+         elementData[s] = e;
+         size = s + 1;
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     /**
+@@ -478,6 +612,9 @@ public class ArrayList<E> extends AbstractList<E>
+      * @throws IndexOutOfBoundsException {@inheritDoc}
+      */
+     public void add(int index, E element) {
++Object locked = this.beforeWrite();
++try {
++
+         rangeCheckForAdd(index);
+         modCount++;
+         final int s;
+@@ -489,6 +626,10 @@ public class ArrayList<E> extends AbstractList<E>
+                          s - index);
+         elementData[index] = element;
+         size = s + 1;
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     /**
+@@ -536,7 +677,7 @@ public class ArrayList<E> extends AbstractList<E>
+     boolean equalsRange(List<?> other, int from, int to) {
+         final Object[] es = elementData;
+         if (to > es.length) {
+-            throw new ConcurrentModificationException();
++            throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+         }
+         var oit = other.iterator();
+         for (; from < to; from++) {
+@@ -555,7 +696,7 @@ public class ArrayList<E> extends AbstractList<E>
+             final Object[] otherEs = other.elementData;
+             final Object[] es = elementData;
+             if (s > es.length || s > otherEs.length) {
+-                throw new ConcurrentModificationException();
++                throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+             }
+             for (int i = 0; i < s; i++) {
+                 if (!Objects.equals(es[i], otherEs[i])) {
+@@ -570,7 +711,7 @@ public class ArrayList<E> extends AbstractList<E>
+ 
+     private void checkForComodification(final int expectedModCount) {
+         if (modCount != expectedModCount) {
+-            throw new ConcurrentModificationException();
++            throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+         }
+     }
+ 
+@@ -587,7 +728,7 @@ public class ArrayList<E> extends AbstractList<E>
+     int hashCodeRange(int from, int to) {
+         final Object[] es = elementData;
+         if (to > es.length) {
+-            throw new ConcurrentModificationException();
++            throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+         }
+         int hashCode = 1;
+         for (int i = from; i < to; i++) {
+@@ -611,6 +752,9 @@ public class ArrayList<E> extends AbstractList<E>
+      * @return {@code true} if this list contained the specified element
+      */
+     public boolean remove(Object o) {
++Object locked = this.beforeWrite();
++try {
++
+         final Object[] es = elementData;
+         final int size = this.size;
+         int i = 0;
+@@ -628,6 +772,10 @@ public class ArrayList<E> extends AbstractList<E>
+         }
+         fastRemove(es, i);
+         return true;
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     /**
+@@ -635,11 +783,18 @@ public class ArrayList<E> extends AbstractList<E>
+      * return the value removed.
+      */
+     private void fastRemove(Object[] es, int i) {
++Object locked = this.beforeWrite();
++try {
++
+         modCount++;
+         final int newSize;
+         if ((newSize = size - 1) > i)
+             System.arraycopy(es, i + 1, es, i, newSize - i);
+         es[size = newSize] = null;
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     /**
+@@ -647,10 +802,17 @@ public class ArrayList<E> extends AbstractList<E>
+      * be empty after this call returns.
+      */
+     public void clear() {
++Object locked = this.beforeWrite();
++try {
++
+         modCount++;
+         final Object[] es = elementData;
+         for (int to = size, i = size = 0; i < to; i++)
+             es[i] = null;
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     /**
+@@ -667,6 +829,9 @@ public class ArrayList<E> extends AbstractList<E>
+      * @throws NullPointerException if the specified collection is null
+      */
+     public boolean addAll(Collection<? extends E> c) {
++Object locked = this.beforeWrite();
++try {
++
+         Object[] a = c.toArray();
+         modCount++;
+         int numNew = a.length;
+@@ -679,6 +844,10 @@ public class ArrayList<E> extends AbstractList<E>
+         System.arraycopy(a, 0, elementData, s, numNew);
+         size = s + numNew;
+         return true;
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     /**
+@@ -697,6 +866,9 @@ public class ArrayList<E> extends AbstractList<E>
+      * @throws NullPointerException if the specified collection is null
+      */
+     public boolean addAll(int index, Collection<? extends E> c) {
++Object locked = this.beforeWrite();
++try {
++
+         rangeCheckForAdd(index);
+ 
+         Object[] a = c.toArray();
+@@ -717,6 +889,10 @@ public class ArrayList<E> extends AbstractList<E>
+         System.arraycopy(a, 0, elementData, index, numNew);
+         size = s + numNew;
+         return true;
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     /**
+@@ -743,9 +919,16 @@ public class ArrayList<E> extends AbstractList<E>
+ 
+     /** Erases the gap from lo to hi, by sliding down following elements. */
+     private void shiftTailOverGap(Object[] es, int lo, int hi) {
++Object locked = this.beforeWrite();
++try {
++
+         System.arraycopy(es, hi, es, lo, size - hi);
+         for (int to = size, i = (size -= hi - lo); i < to; i++)
+             es[i] = null;
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     /**
+@@ -813,6 +996,9 @@ public class ArrayList<E> extends AbstractList<E>
+ 
+     boolean batchRemove(Collection<?> c, boolean complement,
+                         final int from, final int end) {
++Object locked = this.beforeWrite();
++try {
++
+         Objects.requireNonNull(c);
+         final Object[] es = elementData;
+         int r;
+@@ -839,6 +1025,10 @@ public class ArrayList<E> extends AbstractList<E>
+             shiftTailOverGap(es, w, end);
+         }
+         return true;
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     /**
+@@ -854,6 +1044,9 @@ public class ArrayList<E> extends AbstractList<E>
+     @java.io.Serial
+     private void writeObject(java.io.ObjectOutputStream s)
+         throws java.io.IOException {
++Object locked = this.beforeRead();
++try {
++
+         // Write out element count, and any hidden stuff
+         int expectedModCount = modCount;
+         s.defaultWriteObject();
+@@ -867,8 +1060,12 @@ public class ArrayList<E> extends AbstractList<E>
+         }
+ 
+         if (modCount != expectedModCount) {
+-            throw new ConcurrentModificationException();
++            throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+         }
++
++} finally {
++    this.afterRead(locked);
++}
+     }
+ 
+     /**
+@@ -882,6 +1079,8 @@ public class ArrayList<E> extends AbstractList<E>
+     @java.io.Serial
+     private void readObject(java.io.ObjectInputStream s)
+         throws java.io.IOException, ClassNotFoundException {
++Object locked = this.beforeWrite();
++try {
+ 
+         // Read in size, and any hidden stuff
+         s.defaultReadObject();
+@@ -905,6 +1104,10 @@ public class ArrayList<E> extends AbstractList<E>
+         } else {
+             throw new java.io.InvalidObjectException("Invalid size: " + size);
+         }
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     /**
+@@ -964,18 +1167,28 @@ public class ArrayList<E> extends AbstractList<E>
+ 
+         @SuppressWarnings("unchecked")
+         public E next() {
++Object locked = ArrayList.this.beforeRead();
++try {
++
+             checkForComodification();
+             int i = cursor;
+             if (i >= size)
+                 throw new NoSuchElementException();
+             Object[] elementData = ArrayList.this.elementData;
+             if (i >= elementData.length)
+-                throw new ConcurrentModificationException();
++                throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+             cursor = i + 1;
+             return (E) elementData[lastRet = i];
++
++} finally {
++    ArrayList.this.afterRead(locked);
++}
+         }
+ 
+         public void remove() {
++Object locked = ArrayList.this.beforeWrite();
++try {
++
+             if (lastRet < 0)
+                 throw new IllegalStateException();
+             checkForComodification();
+@@ -986,8 +1199,12 @@ public class ArrayList<E> extends AbstractList<E>
+                 lastRet = -1;
+                 expectedModCount = modCount;
+             } catch (IndexOutOfBoundsException ex) {
+-                throw new ConcurrentModificationException();
++                throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+             }
++
++} finally {
++    ArrayList.this.afterWrite(locked);
++}
+         }
+ 
+         @Override
+@@ -998,7 +1215,7 @@ public class ArrayList<E> extends AbstractList<E>
+             if (i < size) {
+                 final Object[] es = elementData;
+                 if (i >= es.length)
+-                    throw new ConcurrentModificationException();
++                    throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                 for (; i < size && modCount == expectedModCount; i++)
+                     action.accept(elementAt(es, i));
+                 // update once at end to reduce heap write traffic
+@@ -1010,7 +1227,7 @@ public class ArrayList<E> extends AbstractList<E>
+ 
+         final void checkForComodification() {
+             if (modCount != expectedModCount)
+-                throw new ConcurrentModificationException();
++                throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+         }
+     }
+ 
+@@ -1037,18 +1254,28 @@ public class ArrayList<E> extends AbstractList<E>
+ 
+         @SuppressWarnings("unchecked")
+         public E previous() {
++Object locked = ArrayList.this.beforeRead();
++try {
++
+             checkForComodification();
+             int i = cursor - 1;
+             if (i < 0)
+                 throw new NoSuchElementException();
+             Object[] elementData = ArrayList.this.elementData;
+             if (i >= elementData.length)
+-                throw new ConcurrentModificationException();
++                throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+             cursor = i;
+             return (E) elementData[lastRet = i];
++
++} finally {
++    ArrayList.this.afterRead(locked);
++}
+         }
+ 
+         public void set(E e) {
++Object locked = ArrayList.this.beforeRead();
++try {
++
+             if (lastRet < 0)
+                 throw new IllegalStateException();
+             checkForComodification();
+@@ -1056,11 +1283,18 @@ public class ArrayList<E> extends AbstractList<E>
+             try {
+                 ArrayList.this.set(lastRet, e);
+             } catch (IndexOutOfBoundsException ex) {
+-                throw new ConcurrentModificationException();
++                throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+             }
++
++} finally {
++    ArrayList.this.afterWrite(locked);
++}
+         }
+ 
+         public void add(E e) {
++Object locked = ArrayList.this.beforeRead();
++try {
++
+             checkForComodification();
+ 
+             try {
+@@ -1070,8 +1304,12 @@ public class ArrayList<E> extends AbstractList<E>
+                 lastRet = -1;
+                 expectedModCount = modCount;
+             } catch (IndexOutOfBoundsException ex) {
+-                throw new ConcurrentModificationException();
++                throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+             }
++
++} finally {
++    ArrayList.this.afterWrite(locked);
++}
+         }
+     }
+ 
+@@ -1138,11 +1376,18 @@ public class ArrayList<E> extends AbstractList<E>
+         }
+ 
+         public E set(int index, E element) {
++Object locked = this.root.beforeWrite();
++try {
++
+             Objects.checkIndex(index, size);
+             checkForComodification();
+             E oldValue = root.elementData(offset + index);
+             root.elementData[offset + index] = element;
+             return oldValue;
++
++} finally {
++    this.root.afterWrite(locked);
++}
+         }
+ 
+         public E get(int index) {
+@@ -1224,12 +1469,22 @@ public class ArrayList<E> extends AbstractList<E>
+         }
+ 
+         public Object[] toArray() {
++Object locked = this.root.beforeRead();
++try {
++
+             checkForComodification();
+             return Arrays.copyOfRange(root.elementData, offset, offset + size);
++
++} finally {
++    this.root.afterRead(locked);
++}
+         }
+ 
+         @SuppressWarnings("unchecked")
+         public <T> T[] toArray(T[] a) {
++Object locked = this.root.beforeRead();
++try {
++
+             checkForComodification();
+             if (a.length < size)
+                 return (T[]) Arrays.copyOfRange(
+@@ -1237,6 +1492,10 @@ public class ArrayList<E> extends AbstractList<E>
+             System.arraycopy(root.elementData, offset, a, 0, size);
+             if (a.length > size)
+                 a[size] = null;
++
++} finally {
++    this.root.afterRead(locked);
++}
+             return a;
+         }
+ 
+@@ -1295,15 +1554,22 @@ public class ArrayList<E> extends AbstractList<E>
+ 
+                 @SuppressWarnings("unchecked")
+                 public E next() {
++Object locked = root.beforeRead();
++try {
++
+                     checkForComodification();
+                     int i = cursor;
+                     if (i >= SubList.this.size)
+                         throw new NoSuchElementException();
+                     Object[] elementData = root.elementData;
+                     if (offset + i >= elementData.length)
+-                        throw new ConcurrentModificationException();
++                        throw root.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                     cursor = i + 1;
+                     return (E) elementData[offset + (lastRet = i)];
++
++} finally {
++    root.afterRead(locked);
++}
+                 }
+ 
+                 public boolean hasPrevious() {
+@@ -1312,15 +1578,22 @@ public class ArrayList<E> extends AbstractList<E>
+ 
+                 @SuppressWarnings("unchecked")
+                 public E previous() {
++Object locked = root.beforeRead();
++try {
++
+                     checkForComodification();
+                     int i = cursor - 1;
+                     if (i < 0)
+                         throw new NoSuchElementException();
+                     Object[] elementData = root.elementData;
+                     if (offset + i >= elementData.length)
+-                        throw new ConcurrentModificationException();
++                        throw root.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                     cursor = i;
+                     return (E) elementData[offset + (lastRet = i)];
++
++} finally {
++    root.afterRead(locked);
++}
+                 }
+ 
+                 public void forEachRemaining(Consumer<? super E> action) {
+@@ -1330,7 +1603,7 @@ public class ArrayList<E> extends AbstractList<E>
+                     if (i < size) {
+                         final Object[] es = root.elementData;
+                         if (offset + i >= es.length)
+-                            throw new ConcurrentModificationException();
++                            throw root.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                         for (; i < size && root.modCount == expectedModCount; i++)
+                             action.accept(elementAt(es, offset + i));
+                         // update once at end to reduce heap write traffic
+@@ -1359,7 +1632,7 @@ public class ArrayList<E> extends AbstractList<E>
+                         lastRet = -1;
+                         expectedModCount = SubList.this.modCount;
+                     } catch (IndexOutOfBoundsException ex) {
+-                        throw new ConcurrentModificationException();
++                        throw root.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                     }
+                 }
+ 
+@@ -1371,7 +1644,7 @@ public class ArrayList<E> extends AbstractList<E>
+                     try {
+                         root.set(offset + lastRet, e);
+                     } catch (IndexOutOfBoundsException ex) {
+-                        throw new ConcurrentModificationException();
++                        throw root.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                     }
+                 }
+ 
+@@ -1385,13 +1658,13 @@ public class ArrayList<E> extends AbstractList<E>
+                         lastRet = -1;
+                         expectedModCount = SubList.this.modCount;
+                     } catch (IndexOutOfBoundsException ex) {
+-                        throw new ConcurrentModificationException();
++                        throw root.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                     }
+                 }
+ 
+                 final void checkForComodification() {
+                     if (root.modCount != expectedModCount)
+-                        throw new ConcurrentModificationException();
++                        throw root.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                 }
+             };
+         }
+@@ -1412,7 +1685,7 @@ public class ArrayList<E> extends AbstractList<E>
+ 
+         private void checkForComodification() {
+             if (root.modCount != modCount)
+-                throw new ConcurrentModificationException();
++                throw root.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+         }
+ 
+         private void updateSizeAndModCount(int sizeChange) {
+@@ -1457,7 +1730,7 @@ public class ArrayList<E> extends AbstractList<E>
+                         @SuppressWarnings("unchecked") E e = (E)root.elementData[i];
+                         action.accept(e);
+                         if (root.modCount != expectedModCount)
+-                            throw new ConcurrentModificationException();
++                            throw root.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                         return true;
+                     }
+                     return false;
+@@ -1484,7 +1757,7 @@ public class ArrayList<E> extends AbstractList<E>
+                                 return;
+                         }
+                     }
+-                    throw new ConcurrentModificationException();
++                    throw root.concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                 }
+ 
+                 public long estimateSize() {
+@@ -1510,7 +1783,7 @@ public class ArrayList<E> extends AbstractList<E>
+         for (int i = 0; modCount == expectedModCount && i < size; i++)
+             action.accept(elementAt(es, i));
+         if (modCount != expectedModCount)
+-            throw new ConcurrentModificationException();
++            throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+     }
+ 
+     /**
+@@ -1593,6 +1866,9 @@ public class ArrayList<E> extends AbstractList<E>
+         }
+ 
+         public boolean tryAdvance(Consumer<? super E> action) {
++Object locked = ArrayList.this.beforeRead();
++try {
++
+             if (action == null)
+                 throw new NullPointerException();
+             int hi = getFence(), i = index;
+@@ -1601,13 +1877,20 @@ public class ArrayList<E> extends AbstractList<E>
+                 @SuppressWarnings("unchecked") E e = (E)elementData[i];
+                 action.accept(e);
+                 if (modCount != expectedModCount)
+-                    throw new ConcurrentModificationException();
++                    throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+                 return true;
+             }
+             return false;
++
++} finally {
++    ArrayList.this.afterRead(locked);
++}
+         }
+ 
+         public void forEachRemaining(Consumer<? super E> action) {
++Object locked = ArrayList.this.beforeRead();
++try {
++
+             int i, hi, mc; // hoist accesses and checks from loop
+             Object[] a;
+             if (action == null)
+@@ -1628,7 +1911,11 @@ public class ArrayList<E> extends AbstractList<E>
+                         return;
+                 }
+             }
+-            throw new ConcurrentModificationException();
++            throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
++
++} finally {
++    ArrayList.this.afterRead(locked);
++}
+         }
+ 
+         public long estimateSize() {
+@@ -1665,6 +1952,9 @@ public class ArrayList<E> extends AbstractList<E>
+      * i (inclusive) to index end (exclusive).
+      */
+     boolean removeIf(Predicate<? super E> filter, int i, final int end) {
++Object locked = this.beforeWrite();
++try {
++
+         Objects.requireNonNull(filter);
+         int expectedModCount = modCount;
+         final Object[] es = elementData;
+@@ -1682,7 +1972,7 @@ public class ArrayList<E> extends AbstractList<E>
+                 if (filter.test(elementAt(es, i)))
+                     setBit(deathRow, i - beg);
+             if (modCount != expectedModCount)
+-                throw new ConcurrentModificationException();
++                throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+             modCount++;
+             int w = beg;
+             for (i = beg; i < end; i++)
+@@ -1692,9 +1982,13 @@ public class ArrayList<E> extends AbstractList<E>
+             return true;
+         } else {
+             if (modCount != expectedModCount)
+-                throw new ConcurrentModificationException();
++                throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+             return false;
+         }
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     @Override
+@@ -1705,23 +1999,37 @@ public class ArrayList<E> extends AbstractList<E>
+     }
+ 
+     private void replaceAllRange(UnaryOperator<E> operator, int i, int end) {
++Object locked = this.beforeWrite();
++try {
++
+         Objects.requireNonNull(operator);
+         final int expectedModCount = modCount;
+         final Object[] es = elementData;
+         for (; modCount == expectedModCount && i < end; i++)
+             es[i] = operator.apply(elementAt(es, i));
+         if (modCount != expectedModCount)
+-            throw new ConcurrentModificationException();
++            throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     @Override
+     @SuppressWarnings("unchecked")
+     public void sort(Comparator<? super E> c) {
++Object locked = this.beforeWrite();
++try {
++
+         final int expectedModCount = modCount;
+         Arrays.sort((E[]) elementData, 0, size, c);
+         if (modCount != expectedModCount)
+-            throw new ConcurrentModificationException();
++            throw concurrentModificationExceptionWithAccessing(new ConcurrentModificationException());
+         modCount++;
++
++} finally {
++    this.afterWrite(locked);
++}
+     }
+ 
+     void checkInvariants() {
