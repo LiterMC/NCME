@@ -1,5 +1,5 @@
 diff --git a/src/java.base/share/classes/java/util/ArrayList.java b/src/java.base/share/classes/java/util/ArrayList.java
-index a36dcd8a796..12978266c1b 100644
+index a36dcd8a796..9a8bdc696fc 100644
 --- a/src/java.base/share/classes/java/util/ArrayList.java
 +++ b/src/java.base/share/classes/java/util/ArrayList.java
 @@ -144,6 +144,94 @@ public class ArrayList<E> extends AbstractList<E>
@@ -556,7 +556,7 @@ index a36dcd8a796..12978266c1b 100644
          }
  
          public void set(E e) {
-+Object locked = ArrayList.this.beforeRead();
++Object locked = ArrayList.this.beforeWrite();
 +try {
 +
              if (lastRet < 0)
@@ -576,7 +576,7 @@ index a36dcd8a796..12978266c1b 100644
          }
  
          public void add(E e) {
-+Object locked = ArrayList.this.beforeRead();
++Object locked = ArrayList.this.beforeWrite();
 +try {
 +
              checkForComodification();
