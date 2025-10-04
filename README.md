@@ -11,6 +11,8 @@ Class files compiled from [OpenJDK](https://github.com/openjdk)
 
 ## Usage
 
+Download the Jar from [Release Page](https://github.com/LiterMC/NCME/releases)
+
 Add the following JVM argument:
 ```
 --patch-module java.base=NCME-<version>.jar
