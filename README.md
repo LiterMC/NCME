@@ -5,7 +5,7 @@ No hard debugging on `ConcurrentModificationException` anymore :p
 
 Only support Java 17.
 
-Only support `java.util.HashMap` operations.
+Only support `java.util.HashMap`, `java.util.ArrayList` operations.
 
 Class files compiled from [OpenJDK](https://github.com/openjdk)
 
