@@ -15,7 +15,7 @@ Download the Jar from [Release Page](https://github.com/LiterMC/NCME/releases)
 
 Add the following JVM argument:
 ```
---patch-module java.base=NCME-<version>.jar
+--patch-module java.base=/path/to/NCME-<version>.jar
 ```
 
 And when `java.util.ConcurrentModificationException` happens, it will log all operations on the object, e.g.:
